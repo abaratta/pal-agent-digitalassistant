@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "npx trigger.dev@4.4.6 dev --skip-update-check",
     "deploy": "npx trigger.dev@4.4.6 deploy --skip-update-check",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "set-commands": "node scripts/set-commands.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.2",
