@@ -1,6 +1,6 @@
 # PAL Agent — Unified Telegram Gateway for Anthropic Managed Agents
 
-A single, multi-tenant Telegram bot that acts as an intelligent front-end for custom cloud-hosted AI agents ("Digital Chief of Staff"). Instead of one bot per client, this unified gateway routes each incoming message to the correct client agent instance using per-user state in the database. Each user brings their own Anthropic API key; the bot provisions a dedicated Managed Agent, environment, vault, and memory store for them, then proxies chat between Telegram and that agent.
+A single, multi-tenant Telegram bot that acts as an intelligent front-end for custom cloud-hosted AI agents ("Digital Personal Assistant"). Instead of one bot per client, this unified gateway routes each incoming message to the correct client agent instance using per-user state in the database. Each user brings their own Anthropic API key; the bot provisions a dedicated Managed Agent, environment, vault, and memory store for them, then proxies chat between Telegram and that agent.
 
 > **Status (2026-06-16):** Working end-to-end in local dev. Onboarding wizard provisions real Anthropic resources, uploads knowledge files, declares MCP connectors, and the operational proxy streams agent replies back to Telegram. Deployed to Vercel for the webhook; the Trigger.dev worker currently runs locally (`npm run dev`). See [Current status & roadmap](#current-status--roadmap) for what's done and what's left.
 

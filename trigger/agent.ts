@@ -18,7 +18,7 @@ export async function handleAgentProxyChat(
       .eq("telegram_chat_id", chatId)
       .eq("is_active", true);
 
-    await sendMessage(chatId, escapeMd("🔄 Context cleared. A fresh conversation session has been initialized with your Chief of Staff."));
+    await sendMessage(chatId, escapeMd("🔄 Context cleared. A fresh conversation session has been initialized with your Digital Personal Assistant."));
     return;
   }
 

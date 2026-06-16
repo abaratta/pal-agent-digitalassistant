@@ -1,6 +1,6 @@
 # Product Development Requirements (PDR)
 
-**Project Name:** Unified Telegram Gateway for Anthropic Managed Agents ("Digital Chief of Staff")
+**Project Name:** Unified Telegram Gateway for Anthropic Managed Agents ("Digital Personal Assistant")
 **Target Architecture:** Vercel (Serverless Gateway) + Trigger.dev v4 (Asynchronous Core) + Supabase (State/Vault Database) + Anthropic Managed Agents (Runtime)
 **Version:** 2.0 — *reflects the as-built implementation, not the original spec.*
 **Last updated:** 2026-06-16

@@ -23,7 +23,7 @@ export async function handleOnboardingStep(
   switch (step) {
     case "collect_name": {
       if (!text.trim()) {
-        await sendMessage(chatId, escapeMd("Welcome! Please enter your full name to begin provisioning your Chief of Staff assistant:"));
+        await sendMessage(chatId, escapeMd("Welcome! Please enter your full name to begin provisioning your Digital Personal Assistant:"));
         return;
       }
       // Send next prompt FIRST, then advance state — a failed send must not silently skip a step.
@@ -174,7 +174,7 @@ async function handleConnectorCallback(
     await sendMessage(
       chatId,
       escapeMd(
-        `🎉 Your Chief of Staff is live!\n\nConnectors declared:\n${list}\n\nTo finish authorizing them, open your Anthropic console, find your agent's vault, and complete the OAuth login for each connector:\n${CONSOLE_URL}\n\nYou can start chatting now — just send me a message.`
+        `🎉 Your Digital Personal Assistant is live!\n\nConnectors declared:\n${list}\n\nTo finish authorizing them, open your Anthropic console, find your agent's vault, and complete the OAuth login for each connector:\n${CONSOLE_URL}\n\nYou can start chatting now — just send me a message.`
       )
     );
     return;

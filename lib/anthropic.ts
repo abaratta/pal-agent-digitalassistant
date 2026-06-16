@@ -52,7 +52,7 @@ function systemPromptFor(profile: {
   company: string | null;
 }): string {
   return [
-    `You are the personal digital Chief of Staff for ${profile.user_name ?? "the user"}`,
+    `You are the personal digital assistant for ${profile.user_name ?? "the user"}`,
     profile.company ? ` at ${profile.company}` : "",
     `. You help manage their work across email, calendar, and connected tools. `,
     `Be concise, proactive, and action-oriented. When you complete a task, confirm what you did in one or two sentences.`,
@@ -73,7 +73,7 @@ export async function provisionAgent(
   } as any);
 
   const agent = await anthropic.beta.agents.create({
-    name: "Digital Chief of Staff",
+    name: "Digital Personal Assistant",
     model: MODEL,
     system: systemPromptFor(profile),
     tools: [{ type: "agent_toolset_20260401" }],
@@ -86,7 +86,7 @@ export async function provisionAgent(
 
   const memoryStore = await anthropic.beta.memoryStores.create({
     name: `pal-${(agent as any).id}`,
-    description: `Persistent memory for ${profile.user_name ?? "the user"}'s Chief of Staff — preferences, ongoing context, and prior task notes.`,
+    description: `Persistent memory for ${profile.user_name ?? "the user"}'s Digital Personal Assistant — preferences, ongoing context, and prior task notes.`,
     metadata: { created_at: nowIso },
   } as any);
 
