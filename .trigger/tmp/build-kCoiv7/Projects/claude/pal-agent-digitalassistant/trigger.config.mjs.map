@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": ["../../../../../../trigger.config.ts"],
-  "sourcesContent": ["import { defineConfig } from \"@trigger.dev/sdk/v3\";\n\nexport default defineConfig({\n  project: \"proj_tdgkbsjcbmjxtoiequpb\",\n  runtime: \"node\",\n  logLevel: \"log\",\n  dirs: [\"./trigger\"],\n\n  // 5 minutes — covers long agent streaming responses\n  maxDuration: 300,\n\n  build: {}\n});\nexport const resolveEnvVars = undefined;"],
-  "mappings": ";;;;;;;;;AAAA;AAEA,IAAO,yBAAQ,aAAa;AAAA,EAC1B,SAAS;AAAA,EACT,SAAS;AAAA,EACT,UAAU;AAAA,EACV,MAAM,CAAC,WAAW;AAAA;AAAA,EAGlB,aAAa;AAAA,EAEb,OAAO,CAAC;AACV,CAAC;AACM,IAAM,iBAAiB;",
-  "names": []
-}
