@@ -31,6 +31,8 @@ export async function editMessage(chatId: number, messageId: number, text: strin
     body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: "MarkdownV2" }),
   });
   const data = await res.json() as any;
+  // Telegram returns 400 when the new content is identical to the current content — not a real error.
+  if (!data.ok && data.description?.includes("message is not modified")) return;
   if (!data.ok) throw new Error(`Telegram editMessage error: ${JSON.stringify(data)}`);
 }
 
