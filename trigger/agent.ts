@@ -41,6 +41,7 @@ export async function handleAgentProxyChat(
       agentId: session.anthropic_agent_id!,
       environmentId: session.anthropic_environment_id!,
       vaultId: session.anthropic_vault_id,
+      memoryStoreId: session.anthropic_memory_store_id,
       fileIds: session.anthropic_file_ids,
     });
 

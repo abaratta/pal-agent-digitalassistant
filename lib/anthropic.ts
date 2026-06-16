@@ -44,6 +44,7 @@ export type ProvisionResult = {
   agentVersion: number;
   environmentId: string;
   vaultId: string;
+  memoryStoreId: string;
 };
 
 function systemPromptFor(profile: {
@@ -64,6 +65,8 @@ export async function provisionAgent(
 ): Promise<ProvisionResult> {
   const anthropic = client(apiKey);
 
+  const nowIso = new Date().toISOString();
+
   const environment = await anthropic.beta.environments.create({
     name: `pal-${Date.now()}`,
     config: { type: "cloud", networking: { type: "unrestricted" } },
@@ -74,10 +77,17 @@ export async function provisionAgent(
     model: MODEL,
     system: systemPromptFor(profile),
     tools: [{ type: "agent_toolset_20260401" }],
+    metadata: { created_at: nowIso },
   } as any);
 
   const vault = await anthropic.beta.vaults.create({
     display_name: `pal-${(agent as any).id}`,
+  } as any);
+
+  const memoryStore = await anthropic.beta.memoryStores.create({
+    name: `pal-${(agent as any).id}`,
+    description: `Persistent memory for ${profile.user_name ?? "the user"}'s Chief of Staff — preferences, ongoing context, and prior task notes.`,
+    metadata: { created_at: nowIso },
   } as any);
 
   return {
@@ -85,11 +95,13 @@ export async function provisionAgent(
     agentVersion: (agent as any).version,
     environmentId: (environment as any).id,
     vaultId: (vault as any).id,
+    memoryStoreId: (memoryStore as any).id,
   };
 }
 
-// Re-declare the agent's MCP servers + toolset for the selected connectors.
-// Returns the new agent version.
+// Re-declare the agent's MCP servers + toolset for the selected connectors,
+// each set to always-allow. agents.update uses optimistic locking, so we read
+// the current version first and pass it back. Returns the new agent version.
 export async function setAgentConnectors(
   apiKey: string,
   agentId: string,
@@ -97,18 +109,31 @@ export async function setAgentConnectors(
 ): Promise<number> {
   const anthropic = client(apiKey);
 
+  const current = await anthropic.beta.agents.retrieve(agentId);
+  const version = (current as any).version;
+
   const mcpServers = connectors.map((k) => ({
     type: "url",
     name: CONNECTORS[k].mcpName,
     url: CONNECTORS[k].url,
   }));
 
-  const tools: any[] = [{ type: "agent_toolset_20260401" }];
+  const tools: any[] = [
+    {
+      type: "agent_toolset_20260401",
+      default_config: { enabled: true, permission_policy: { type: "always_allow" } },
+    },
+  ];
   for (const k of connectors) {
-    tools.push({ type: "mcp_toolset", mcp_server_name: CONNECTORS[k].mcpName });
+    tools.push({
+      type: "mcp_toolset",
+      mcp_server_name: CONNECTORS[k].mcpName,
+      default_config: { enabled: true, permission_policy: { type: "always_allow" } },
+    });
   }
 
   const updated = await anthropic.beta.agents.update(agentId, {
+    version,
     mcp_servers: mcpServers,
     tools,
   } as any);
@@ -144,16 +169,27 @@ export async function createSession(
     agentId: string;
     environmentId: string;
     vaultId: string | null;
+    memoryStoreId: string | null;
     fileIds: string[];
   },
 ): Promise<string> {
   const anthropic = client(apiKey);
 
-  const resources = opts.fileIds.map((fileId, i) => ({
+  const resources: any[] = opts.fileIds.map((fileId, i) => ({
     type: "file",
     file_id: fileId,
     mount_path: `/workspace/knowledge/file_${i}`,
   }));
+
+  // Memory stores attach via resources at session-create time only.
+  if (opts.memoryStoreId) {
+    resources.push({
+      type: "memory_store",
+      memory_store_id: opts.memoryStoreId,
+      access: "read_write",
+      instructions: "Your long-term memory. Check it before starting a task, and record preferences and useful context as you go.",
+    });
+  }
 
   const session = await anthropic.beta.sessions.create({
     agent: opts.agentId,

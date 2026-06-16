@@ -87,6 +87,7 @@ export async function handleOnboardingStep(
         anthropic_agent_id: provision.agentId,
         anthropic_environment_id: provision.environmentId,
         anthropic_vault_id: provision.vaultId,
+        anthropic_memory_store_id: provision.memoryStoreId,
         current_step: "upload_knowledge_base",
       });
       break;

@@ -17,6 +17,7 @@ export type UserSession = {
   anthropic_agent_id: string | null;
   anthropic_environment_id: string | null;
   anthropic_vault_id: string | null;
+  anthropic_memory_store_id: string | null;
   anthropic_file_ids: string[];
   mcp_connectors: string[];
   created_at: string;
