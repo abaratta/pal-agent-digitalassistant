@@ -1,272 +1,199 @@
 # Product Development Requirements (PDR)
 
-**Project Name:** Unified Telegram Gateway for Anthropic Managed Agents
-**Target Architecture:** Vercel (Serverless Gateway) + Trigger.dev v3 (Asynchronous Core) + Supabase (State/Vault Database)
-**Version:** 1.1 (Includes Session State Tracking & Extended Multi-Tenancy Logic)
+**Project Name:** Unified Telegram Gateway for Anthropic Managed Agents ("Digital Chief of Staff")
+**Target Architecture:** Vercel (Serverless Gateway) + Trigger.dev v4 (Asynchronous Core) + Supabase (State/Vault Database) + Anthropic Managed Agents (Runtime)
+**Version:** 2.0 — *reflects the as-built implementation, not the original spec.*
+**Last updated:** 2026-06-16
+
+> **How to read this document.** §1–§6 describe the system as it is actually built (the code is the source of truth; file references are given throughout). §7 is the live **status & roadmap** — what works, what's pending, known issues. §8 is a **how-to-extend** guide for adding features. If you are picking this project up cold, read §1, then §7, then jump to the code file relevant to your task.
 
 ---
 
 ## 1. System Overview
 
-The objective of this project is to build a single, multi-tenant Telegram Bot that serves as an intelligent front-end interface for custom cloud-hosted AI agents. Instead of creating a separate Telegram bot per client, this unified application routes incoming messages to unique client agent instances using **Deep Linking** and state-based filtering.
+A single, multi-tenant Telegram bot that serves as an intelligent front-end for custom cloud-hosted AI agents. Rather than one bot per client, this unified app routes incoming messages to per-client agent instances using per-user state in Postgres.
 
-The application operates in two distinct functional modes on a per-user basis:
+Each user supplies **their own** Anthropic API key during onboarding. The bot uses that key to provision a dedicated set of Anthropic resources for them and thereafter proxies chat between Telegram and that agent. The operator's own Anthropic key is never used at runtime.
 
-1. **Onboarding State (Linear Wizard):** Gathers basic profiling information, captures the client's encrypted Anthropic API Key, forwards uploaded organizational documentation directly to Anthropic's hosted Files API, and presents manual setup guides for Model Context Protocol (MCP) servers.
-2. **Operational State (Agent Proxy Router with Contextual Memory):** Intercepts natural language prompts and seamlessly forwards them to the client's Anthropic Managed Agent instance. It maintains conversation continuity by managing state across individual chat threads, updating message strings dynamically using Telegram's formatting syntax.
+The application operates in two modes per user, branched on `user_sessions.onboarding_completed`:
+
+1. **Onboarding State (Linear Wizard)** — Collects profile info; captures + encrypts the client's Anthropic key; **provisions an Agent + Environment + Vault + Memory Store**; forwards uploaded documents to the Anthropic Files API; and lets the user select MCP connectors via an inline keyboard, declaring them on the agent config.
+2. **Operational State (Agent Proxy Router)** — Forwards prompts to the user's Managed Agent, maintains an active session per chat thread, and streams the reply back into a single Telegram message via throttled edits.
 
 ---
 
 ## 2. Database Schema (Supabase / PostgreSQL)
 
-The backend engine relies on two relational tables to map tenant profiles and monitor live conversations.
+The schema is maintained as ordered migrations in [`supabase/migrations/`](supabase/migrations/). Apply them in numeric order. RLS is intentionally **off** — access is server-side only via the service-role key.
 
-### 2.1 Table: `user_sessions`
+### 2.1 `user_sessions` — per-user global state
+Created in `001_initial_schema.sql`, extended by `002` and `003`. Effective columns:
 
-Tracks the global state, configuration attributes, and core identity data for each registered user.
+| Column | Type | Source | Notes |
+| --- | --- | --- | --- |
+| `telegram_chat_id` | BIGINT PK | 001 | Tenant identity. |
+| `onboarding_completed` | BOOLEAN | 001 | Mode switch. |
+| `current_step` | VARCHAR(50) | 001 | State-machine cursor (default `collect_name`). |
+| `user_name`, `email`, `company`, `website` | VARCHAR | 001 | Profile. |
+| `encrypted_anthropic_key` | TEXT | 001 | AES-GCM-256, format `ivB64:ctB64`. |
+| `anthropic_agent_id` | VARCHAR | 001 | Provisioned agent. |
+| `anthropic_environment_id` | VARCHAR | 001 | Provisioned environment. |
+| `anthropic_vault_id` | VARCHAR | 002 | For MCP connector credentials. |
+| `anthropic_file_ids` | TEXT[] | 002 | Uploaded knowledge-base file IDs. |
+| `mcp_connectors` | TEXT[] | 002 | Selected connector keys. |
+| `anthropic_memory_store_id` | VARCHAR | 003 | Persistent cross-session memory. |
+| `created_at`, `updated_at` | TIMESTAMPTZ | 001 | `updated_at` maintained by trigger. |
 
-```sql
-CREATE TABLE user_sessions (
-    telegram_chat_id BIGINT PRIMARY KEY,
-    onboarding_completed BOOLEAN DEFAULT FALSE,
-    current_step VARCHAR(50) DEFAULT 'collect_name',
+### 2.2 `agent_conversations` — Telegram thread ↔ Anthropic session map
+(`001`) `id`, `telegram_chat_id` (FK, cascade), `anthropic_session_id`, `is_active`, timestamps. `/new_chat` flips `is_active` to false so the next message creates a fresh session.
 
-    -- Client Profile Metadata
-    user_name VARCHAR(255),
-    email VARCHAR(255),
-    company VARCHAR(255),
-    website VARCHAR(255),
+### 2.3 `processed_updates` — idempotency cache
+(`001`) `update_id` PK + `created_at`. Telegram retries are dropped if the `update_id` was already seen. Intended 5-minute purge via `pg_cron` (commented schedule in the migration).
 
-    -- Encrypted Anthropic Integration Layer
-    encrypted_anthropic_key TEXT,
-    anthropic_agent_id VARCHAR(255),
-    anthropic_environment_id VARCHAR(255),
-
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Index to optimize routing lookups
-CREATE INDEX idx_user_onboarding ON user_sessions(telegram_chat_id, onboarding_completed);
-```
-
-### 2.2 Table: `agent_conversations`
-
-Maintains long-term associations between continuous Telegram interactions and isolated Anthropic Agent workspace sessions.
-
-```sql
-CREATE TABLE agent_conversations (
-    id BIGSERIAL PRIMARY KEY,
-    telegram_chat_id BIGINT NOT NULL REFERENCES user_sessions(telegram_chat_id) ON DELETE CASCADE,
-    anthropic_session_id VARCHAR(255) NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Index for real-time thread lookup
-CREATE INDEX idx_tg_chat_active ON agent_conversations(telegram_chat_id, is_active);
-```
+The row shapes are mirrored in TypeScript as `UserSession` / `AgentConversation` in [`lib/supabase.ts`](lib/supabase.ts) — **keep them in sync when adding a column.**
 
 ---
 
-## 3. High-Level System Architecture & Execution Lifecycle
+## 3. Execution Lifecycle
 
-To manage chat payloads efficiently and prevent packet delivery failures due to slow upstream generation, the engineering design completely decouples incoming network confirmation from the long-running execution process.
+Incoming network confirmation is fully decoupled from long-running execution so Telegram always gets a fast 200.
 
 ```
-[User Telegram App] ──(1. Text/File Payload)──> [Vercel FastAPI Gateway]
-                                                           │
-                                                           │ (2. Immediate 200 OK Hand-off)
-                                                           ▼
-                                                [Trigger.dev Engine]
-                                                           │
-                                     ┌─────────────────────┴─────────────────────┐
-                        [ onboarding_completed = false ]           [ onboarding_completed = true ]
-                                     │                                           │
-                                     ▼                                           ▼
-                        Execute Sequential Wizard Flow             Resolve Thread ID & Stream Prompt
+[User Telegram App] ──(text / file / button tap)──▶ [Vercel: api/webhook.ts]
+                                                            │ (instant 200 OK; enqueue task)
+                                                            ▼
+                                              [Trigger.dev: route-telegram-event]
+                                                            │  dedupe → load/create session
+                                       ┌────────────────────┴────────────────────┐
+                          onboarding_completed = false              onboarding_completed = true
+                                       ▼                                          ▼
+                          handleOnboardingStep()                       handleAgentProxyChat()
+                          (trigger/onboarding.ts)                       (trigger/agent.ts)
 ```
 
-### 3.1 Vercel Gatekeeper Route (`/api/webhook.ts`)
+### 3.1 Vercel gateway — [`api/webhook.ts`](api/webhook.ts)
+Accepts POST only. Handles two update shapes:
+- **`callback_query`** (inline-button tap): enqueues with `text: ""` and a `callback: { id, data }` payload.
+- **`message`** (text or document): enqueues `chatId`, `text`, `document`, `updateId`, `callback: null`.
 
-This serverless handler processes the raw webhook packet sent by Telegram, sanitizes the transmission context, triggers the async task layer, and drops the connection within 200ms.
+Returns `{ ok: true }` immediately; all real work happens in the task.
 
-```typescript
-import { tasks } from "@trigger.dev/sdk/v3";
-import type { Request, Response } from "express";
+### 3.2 Router task — [`trigger/router.ts`](trigger/router.ts)
+1. Loads `.env` by absolute path (the dev worker uses its own cwd) and imports [`lib/netfix.ts`](lib/netfix.ts) to force IPv4.
+2. **Idempotency:** look up `update_id` in `processed_updates`; skip if seen, else insert.
+3. Load `user_sessions` row; create one (default `current_step = collect_name`) if absent.
+4. Normalize `/start` → empty text (so the welcome prompt fires).
+5. Branch to `handleOnboardingStep` or `handleAgentProxyChat`.
 
-export default async function handler(req: Request, res: Response) {
-  const payload = req.body;
-  if (!payload || !payload.message) return res.status(200).send("OK");
-
-  const chatId = payload.message.chat.id;
-  const text = payload.message.text || "";
-  const document = payload.message.document || null;
-
-  // Delegate processing instantly to the Trigger.dev execution queue
-  await tasks.trigger("route-telegram-event", { chatId, text, document });
-
-  // Affirm message delivery instantly back to Telegram API
-  return res.status(200).json({ ok: true });
-}
-```
-
-### 3.2 Trigger.dev Routing Mechanism (`/trigger/router.ts`)
-
-This background worker executes database queries to load context state and routes execution branches based on registration completion flags.
-
-```typescript
-import { task } from "@trigger.dev/sdk/v3";
-import { supabaseClient } from "../lib/supabase";
-
-export const routeTelegramEvent = task({
-  id: "route-telegram-event",
-  run: async (payload: { chatId: number; text: string; document: any }) => {
-    // Fetch profile state mapping
-    let { data: session } = await supabaseClient
-      .from("user_sessions")
-      .select("*")
-      .eq("telegram_chat_id", payload.chatId)
-      .maybeSingle();
-
-    // Instantiate profile if missing (deep linking fallback initialization)
-    if (!session) {
-      session = await createInitialSession(payload.chatId);
-    }
-
-    if (!session.onboarding_completed) {
-      return await handleOnboardingStep(session, payload);
-    } else {
-      return await handleAgentProxyChat(session, payload);
-    }
-  }
-});
-```
+The shared payload type is `TelegramEventPayload` (exported from `router.ts`).
 
 ---
 
-## 4. Phase 1: Interactive Onboarding Engine Specification
+## 4. Phase 1 — Onboarding Engine — [`trigger/onboarding.ts`](trigger/onboarding.ts)
 
-When a user opens the bot through an onboarding deep-link, the system executes a structured state-machine flow across sequential milestones.
+A `switch (current_step)` state machine. **Critical ordering rule:** always `sendMessage` the *next* prompt **before** calling `updateSession` to advance `current_step`. A failed send must never silently skip a step (this bug bit us once during the IPv6 outage).
 
-### 4.1 Onboarding Steps & State Changes
+### 4.1 Steps
 
-| State Name (`current_step`) | System Action / User Facing Prompt | Next State Destination |
+| `current_step` | Action | Next |
 | --- | --- | --- |
-| `collect_name` | "Welcome! Please enter your full name to begin provisioning your Chief of Staff assistant:" | `collect_email` |
-| `collect_email` | "Thank you. What is your preferred business email address?" (Enforce regex email checks) | `collect_company` |
-| `collect_company` | "Please enter the legal or operational name of your organization/company:" | `collect_website` |
-| `collect_website` | "What is your main company website URL?" | `collect_anthropic_key` |
-| `collect_anthropic_key` | "Provide your secret Anthropic Developer API Key. This will be encrypted at rest in your secure agent profile workspace:" | `upload_knowledge_base` |
-| `upload_knowledge_base` | "Onboarding verification successful! Please attach and upload your business knowledge documents (PDF, MD, TXT). Use the paperclip icon." | `configure_mcp` |
-| `configure_mcp` | Renders system markdown implementation steps for activating MCP plugins in their console. | `operational` |
+| `collect_name` | Prompt for full name. | `collect_email` |
+| `collect_email` | Validate with `EMAIL_REGEX`. | `collect_company` |
+| `collect_company` | Capture org name. | `collect_website` |
+| `collect_website` | Capture site URL, then ask for the Anthropic key. | `collect_anthropic_key` |
+| `collect_anthropic_key` | Validate `sk-ant-` prefix → **`provisionAgent()`** (also validates the key) → encrypt key → store agent/env/vault/memory IDs. | `upload_knowledge_base` |
+| `upload_knowledge_base` | For each attached file: download from Telegram, `uploadKnowledgeFile()` to Anthropic, append the file ID. `/skip` advances. | `configure_mcp` |
+| `configure_mcp` | Render the connector inline keyboard; button taps drive selection. | `operational` |
 
-### 4.2 Document Forwarding Pipeline (Anthropic Files API Integration)
+### 4.2 Provisioning — `provisionAgent()` in [`lib/anthropic.ts`](lib/anthropic.ts)
+On key capture, creates in one shot: an **Environment** (`cloud`, unrestricted networking), an **Agent** (`claude-opus-4-8`, Chief-of-Staff system prompt, `agent_toolset_20260401`, `metadata.created_at`), a **Vault** (for MCP creds), and a **Memory Store** (persistent context). Returns all IDs, persisted to `user_sessions`.
 
-When a file is detected during the `upload_knowledge_base` phase, the worker must stream the data directly to the client's Anthropic console bucket:
+### 4.3 Knowledge files — `uploadKnowledgeFile()`
+Downloads the Telegram file to memory and uploads to the Anthropic Files API (`purpose: "agent"`, beta `files-api-2025-04-14`). Files are **not** bound to the agent here — they are mounted per-session at chat time (§5).
 
-1. Request raw storage file paths by requesting: `https://api.telegram.org/bot<TOKEN>/getFile?file_id=${payload.document.file_id}`.
-2. Download the target document chunk stream into serverless runtime volatile memory.
-3. Post the binary data payload directly to the **Anthropic Files API** endpoint (`https://api.anthropic.com/v1/files`) utilizing the customer's decrypted API key. Include the mandatory request header: `anthropic-beta: files-api-2025-04-14`.
-4. Take the resulting remote file `id` and issue an agent configuration update request (`PATCH /v1/agents/{agent_id}`) with the header `anthropic-beta: managed-agents-2026-04-01` to bind the knowledge base file directly to the runtime instance.
+### 4.4 MCP connectors — connector menu + `setAgentConnectors()`
+The connector registry is `CONNECTORS` in [`lib/anthropic.ts`](lib/anthropic.ts) (currently `email`, `calendar`; URLs env-overridable via `MCP_EMAIL_URL` / `MCP_CALENDAR_URL`). The inline keyboard (`renderConnectorMenu`) lets the user toggle connectors; **Done** calls `setAgentConnectors()`, which:
+- **Retrieves the agent first to read its current `version`** (the API uses optimistic locking — updating without `version` returns `400 version: Field required`).
+- Re-declares `mcp_servers` + a `mcp_toolset` per connector + the base `agent_toolset_20260401`, all with `permission_policy: always_allow`.
 
-### 4.3 MCP Onboarding Integration Layout
-
-Once file synchronization tasks conclude, the worker pushes step-by-step setup guides to the user's screen along with interactive inline elements:
-
-```markdown
-🤖 *Step 6: Provisioning & Authorizing your MCP Connectors*
-
-Your personal digital Chief of Staff is initialized! To enable enterprise tool integration (Email engines, Calendars, Social media accounts), you must authorize the connector infrastructure directly within your Anthropic developer space.
-
-*Instructions:*
-1️⃣ Access your secure Anthropic Developer Console.
-2️⃣ Click on **Agent Profiles** and choose your active Assistant ID.
-3️⃣ Navigate to **MCP Connected Server Vaults**, select your desired app, and enter your account login profiles.
-
-[ 🌐 Open Anthropic Console ]  [ ✅ Setup Verification Complete ]
-```
+OAuth for each connector is **manual**: the user finishes authorizing in the Anthropic console (we point them there). This is the deliberate "manual MCP" approach.
 
 ---
 
-## 5. Phase 2: Operational Agent Proxy Router Specification
+## 5. Phase 2 — Operational Proxy — [`trigger/agent.ts`](trigger/agent.ts)
 
-Once `onboarding_completed` evaluates to `true`, the conversational proxy engine takes over, processing interactions through continuous context windows.
+1. **`/new_chat`** → mark the active `agent_conversations` row inactive and confirm. Next message starts fresh.
+2. Resolve the active Anthropic session for the chat; if none, **`createSession()`** ([`lib/anthropic.ts`](lib/anthropic.ts)) mounting: each knowledge file as a `file` resource, the memory store as a `read_write` `memory_store` resource, and the vault via `vault_ids`. Persist the new session in `agent_conversations`.
+3. Post a `⏳ Thinking…` placeholder, then **`runPrompt()`** streams the reply.
 
-### 5.1 Contextual State Mapping & Conversation Control Flow
-
-The engine implements session rules using this execution schema:
-
-```typescript
-export async function handleAgentProxyChat(session: any, payload: { chatId: number; text: string }) {
-
-  // 1. Intercept Global Thread Command to Reset the Workspace
-  if (payload.text.trim() === "/new_chat") {
-    await supabaseClient
-      .from("agent_conversations")
-      .update({ is_active: false })
-      .eq("telegram_chat_id", payload.chatId)
-      .eq("is_active", true);
-
-    await sendTelegramMessage(payload.chatId, "🔄 Context cleared. A fresh conversation session has been initialized with your Chief of Staff.");
-    return; // Drop out to let the next inbound token message trigger initialization
-  }
-
-  // 2. Query for a running, active Anthropic session ID map
-  let { data: activeConv } = await supabaseClient
-    .from("agent_conversations")
-    .select("anthropic_session_id")
-    .eq("telegram_chat_id", payload.chatId)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  let anthropicSessionId = activeConv?.anthropic_session_id;
-
-  // 3. Lifecycle Initialization: Handle New Conversation Branch
-  if (!anthropicSessionId) {
-    const anthropic = new Anthropic({ apiKey: decryptApiKey(session.encrypted_anthropic_key) });
-
-    // Call the Anthropic Managed Agents API to create a brand-new cloud workspace container
-    // Requires header: anthropic-beta: managed-agents-2026-04-01
-    const newSession = await anthropic.beta.agents.sessions.create({
-      agent_id: session.anthropic_agent_id,
-    });
-
-    anthropicSessionId = newSession.id;
-
-    // Persist session identity in Supabase database mapping
-    await supabaseClient.from("agent_conversations").insert({
-      telegram_chat_id: payload.chatId,
-      anthropic_session_id: anthropicSessionId,
-      is_active: true
-    });
-  }
-
-  // 4. Thread Appending & Real-time Text Streaming Execution Loop
-  // Dispatch prompt text to the active container session thread
-  const msgStream = await anthropic.beta.agents.sessions.messages.create(
-    session.anthropic_agent_id,
-    anthropicSessionId,
-    {
-      role: "user",
-      content: payload.text,
-      stream: true
-    }
-  );
-
-  // 5. Output Response Tailing Strategy
-  // - Catch initial token generation chunks and issue a text bubble creation via `sendMessage`.
-  // - As additional word groupings emerge, update the output target on screen using `editMessageText`.
-  // - IMPLEMENTATION CONSTRAINT: Throttle UI update requests to a minimum of 1200ms intervals to safeguard against Telegram API rate limits.
-  // - Ensure all generated Markdown syntax segments are completely escaped to meet Telegram's MarkdownV2 strict character parsing constraints.
-}
-```
+### 5.1 Streaming — `runPrompt()`
+Uses the real Managed Agents sessions API (the v1 PDR's `agents.sessions.messages.create` shape was hallucinated and does not exist):
+- **Stream-first:** open `sessions.events.stream(sessionId)` **before** `sessions.events.send(...)` — the stream only delivers events emitted after it opens.
+- Accumulate text from `agent.message` events; flush to Telegram via `editMessage` **no more than every 1200ms** (rate-limit guard).
+- Break on `session.status_terminated`, or `session.status_idle` unless `stop_reason.type === "requires_action"`.
+- All text is MarkdownV2-escaped via `escapeMd` before sending.
 
 ---
 
-## 6. Security Guarantees & Non-Functional Constraints
+## 6. Security & Non-Functional Constraints
 
-* **Cryptographic Protocol at Rest:** API tokens submitted by clients must never be logged or stored as plaintext. The application must encrypt values using symmetric AES-GCM-256 wrappers before updating records. Decryption should occur exclusively in volatile memory for immediate outbound API requests.
-* **Network Idempotency Checkpoints:** To counter redundant delivery retries from Telegram during platform latency spikes, the routing layer must cache processing transaction identifiers (`update_id`) within an isolated schema key layer for 5 minutes, ignoring duplicate events.
-* **Decoupled Architectural Boundaries:** The processing gateway is strictly proxy-only. The system must not run internal tokenizers, chunking utilities, document scanners, vector indices, or model instances. Content indexing, analysis, and data storage are fully offloaded to Anthropic's managed agent infrastructure.
+- **AES-GCM-256 at rest** ([`lib/crypto.ts`](lib/crypto.ts)) — per-user keys encrypted as `ivB64:ctB64`; decrypted only in memory for outbound calls. Never logged/stored plaintext. `ENCRYPTION_KEY` is 64 hex chars (32 bytes).
+- **Idempotency** — `update_id`s cached in `processed_updates`; duplicates dropped.
+- **Proxy-only boundary** — no local tokenizers, chunking, vector indices, or model instances. Indexing/analysis/storage all live in Anthropic's managed infra.
+- **IPv4 forcing** ([`lib/netfix.ts`](lib/netfix.ts)) — dev-only network workaround; harmless in cloud.
+
+---
+
+## 7. Current Status & Roadmap
+
+### 7.1 Working (verified in local dev)
+- ✅ Webhook → Trigger.dev → branch routing, with `update_id` idempotency.
+- ✅ Full onboarding wizard: profile → key capture → real provisioning (agent/env/vault/memory) → file upload → MCP connector selection.
+- ✅ `setAgentConnectors` with optimistic-lock `version` handling.
+- ✅ Operational proxy: session create with file + memory + vault resources, throttled streaming back to Telegram.
+- ✅ AES-GCM-256 key encryption; MarkdownV2 escaping; `/new_chat` reset.
+
+### 7.2 Pending / TODO
+- ⏳ **Run the Trigger.dev worker in the cloud** (`npm run deploy`) instead of local `npm run dev`; set env vars in the Trigger.dev dashboard.
+- ⏳ **Real MCP endpoint URLs** — `MCP_EMAIL_URL` / `MCP_CALENDAR_URL` are placeholders (`https://mcp.example.com/...`). Set real hosted MCP servers before go-live, in both Vercel and Trigger.dev env.
+- ⏳ **`pg_cron` purge** for `processed_updates` (schedule is commented in `001`). Without it the table grows unbounded.
+- ⏳ **Telegram message chunking** — replies over Telegram's 4096-char limit will fail the final `editMessage`. Add splitting.
+- ⏳ **Error surfacing to the user** in the proxy path (currently a thrown error just fails the run; the placeholder bubble stays "Thinking…").
+- ⏳ **Deep-link onboarding** (`/start <token>`) for assigning users to pre-created agents — referenced in the original concept, not yet built.
+
+### 7.3 Known issues / gotchas
+- Connector OAuth is **manual** in the Anthropic console — not automated.
+- `mcp_connectors` selections persist per toggle, but `setAgentConnectors` only runs on **Done**.
+- Files deleted via `files.delete` (`DELETE /v1/files/{id}`) may linger in the console UI due to caching; deletion no-ops silently if the key/workspace doesn't own the file.
+
+---
+
+## 8. How to Add a Feature
+
+General rule: **the code is the source of truth.** When you change behavior, update the relevant file, keep `UserSession` in [`lib/supabase.ts`](lib/supabase.ts) in sync with the DB, and update §2/§7 here.
+
+### 8.1 Add an onboarding step
+1. Add a `case "<new_step>"` to the `switch` in [`trigger/onboarding.ts`](trigger/onboarding.ts).
+2. Wire it into the chain: the prior step's `updateSession({ current_step: "<new_step>" })`.
+3. **Send the prompt before advancing state** (the ordering rule, §4).
+4. If it stores data, add the column (new migration), add it to `UserSession`, and to the `updateSession` call.
+
+### 8.2 Add a new MCP connector
+1. Add an entry to `CONNECTORS` in [`lib/anthropic.ts`](lib/anthropic.ts): `{ label, mcpName, url: process.env.MCP_<X>_URL || "<placeholder>" }`.
+2. Set the env var in `.env`, Vercel, and Trigger.dev.
+3. That's it — `renderConnectorMenu` and `setAgentConnectors` are both driven off the `CONNECTORS` map, so the UI and agent config pick it up automatically.
+
+### 8.3 Add a new database column
+1. New file `supabase/migrations/00N_<name>.sql` using `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+2. Apply it in the Supabase SQL editor.
+3. Add the field to the `UserSession` type in [`lib/supabase.ts`](lib/supabase.ts).
+4. Read/write it where needed.
+
+### 8.4 Add a bot command (e.g. `/status`)
+Handle it early in `handleAgentProxyChat` ([`trigger/agent.ts`](trigger/agent.ts)) — mirror the existing `/new_chat` block (match on `text.trim()`, do the work, `return`). Onboarding-time commands go in `handleOnboardingStep` instead.
+
+### 8.5 Change the agent's model or system prompt
+Edit `MODEL` and `systemPromptFor()` in [`lib/anthropic.ts`](lib/anthropic.ts). Note: existing users already have provisioned agents — changes only affect **newly** provisioned ones unless you also push an `agents.update` (remember the optimistic-lock `version`).
+
+### 8.6 Local testing loop
+`npm run dev` (worker) + Vercel webhook pointed at your deployment. To reset a tenant, delete their `user_sessions` row (and `agent_conversations` rows) in Supabase; the next message re-runs onboarding from `collect_name`. Use `npm run typecheck` before committing.
