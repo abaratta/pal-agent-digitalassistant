@@ -78,6 +78,7 @@ SUPABASE_URL=              # https://<ref>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY= # service role key (server-side only)
 TRIGGER_SECRET_KEY=        # tr_dev_... for local dev
 ENCRYPTION_KEY=            # 64-char hex (32 bytes) for AES-GCM-256
+TELEGRAM_WEBHOOK_SECRET=   # shared secret echoed by Telegram to authenticate the webhook
 MCP_EMAIL_URL=             # hosted MCP endpoint for the email connector (optional until go-live)
 MCP_CALENDAR_URL=          # hosted MCP endpoint for the calendar connector
 ```
@@ -92,11 +93,11 @@ npm run dev      # starts the Trigger.dev v4 dev worker (runs tasks on your mach
 ```
 
 ### 5. Point Telegram at the webhook
-Deploy [`api/webhook.ts`](api/webhook.ts) to Vercel, then register the webhook:
+Deploy [`api/webhook.ts`](api/webhook.ts) to Vercel (with `TELEGRAM_WEBHOOK_SECRET` set in the Vercel env **first**), then register the webhook with the same secret:
 ```bash
-curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<your-app>.vercel.app/api/webhook"
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<your-app>.vercel.app/api/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
 ```
-Message the bot on Telegram to start onboarding.
+Telegram echoes `secret_token` back in the `X-Telegram-Bot-Api-Secret-Token` header on every update; the handler rejects any request that doesn't match (and fails closed if the env var is unset). Message the bot on Telegram to start onboarding.
 
 > **Local dev note:** Vercel receives the webhook and enqueues the Trigger.dev task; the task itself executes wherever the worker runs. In dev that's your machine (`npm run dev`). To run the worker in the cloud, `npm run deploy` and set the same env vars in the Trigger.dev dashboard.
 

@@ -137,6 +137,7 @@ Uses the real Managed Agents sessions API (the v1 PDR's `agents.sessions.message
 
 ## 6. Security & Non-Functional Constraints
 
+- **Webhook authentication** ([`api/webhook.ts`](api/webhook.ts)) — Telegram echoes the `secret_token` registered via `setWebhook` in the `X-Telegram-Bot-Api-Secret-Token` header. The handler rejects any request whose header doesn't match `TELEGRAM_WEBHOOK_SECRET`, and **fails closed** (500) if that env var is unset. Without this, a forged POST with an arbitrary `chat.id` could drive another user's agent — and with MCP tools set to `always_allow`, trigger auto-approved tool calls under the victim's credentials.
 - **AES-GCM-256 at rest** ([`lib/crypto.ts`](lib/crypto.ts)) — per-user keys encrypted as `ivB64:ctB64`; decrypted only in memory for outbound calls. Never logged/stored plaintext. `ENCRYPTION_KEY` is 64 hex chars (32 bytes).
 - **Idempotency** — `update_id`s cached in `processed_updates`; duplicates dropped.
 - **Proxy-only boundary** — no local tokenizers, chunking, vector indices, or model instances. Indexing/analysis/storage all live in Anthropic's managed infra.
@@ -152,6 +153,7 @@ Uses the real Managed Agents sessions API (the v1 PDR's `agents.sessions.message
 - ✅ `setAgentConnectors` with optimistic-lock `version` handling.
 - ✅ Operational proxy: session create with file + memory + vault resources, throttled streaming back to Telegram.
 - ✅ AES-GCM-256 key encryption; MarkdownV2 escaping; `/new_chat` reset.
+- ✅ Webhook authentication via `TELEGRAM_WEBHOOK_SECRET` (fail-closed; see §6). Requires `setWebhook` to be re-registered with the matching `secret_token`.
 
 ### 7.2 Pending / TODO
 - ⏳ **Run the Trigger.dev worker in the cloud** (`npm run deploy`) instead of local `npm run dev`; set env vars in the Trigger.dev dashboard.
@@ -160,6 +162,7 @@ Uses the real Managed Agents sessions API (the v1 PDR's `agents.sessions.message
 - ⏳ **Telegram message chunking** — replies over Telegram's 4096-char limit will fail the final `editMessage`. Add splitting.
 - ⏳ **Error surfacing to the user** in the proxy path (currently a thrown error just fails the run; the placeholder bubble stays "Thinking…").
 - ⏳ **Deep-link onboarding** (`/start <token>`) for assigning users to pre-created agents — referenced in the original concept, not yet built.
+- ⏳ **Supabase RLS** as defense-in-depth — isolation currently relies entirely on every query being scoped by `telegram_chat_id`. RLS would catch a future query that forgets it. (Webhook auth, above, is now in place.)
 
 ### 7.3 Known issues / gotchas
 - Connector OAuth is **manual** in the Anthropic console — not automated.
