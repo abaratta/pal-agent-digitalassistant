@@ -1,9 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
+import ws from "ws";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-export const supabaseClient = createClient(supabaseUrl, supabaseKey);
+// Provide a WebSocket implementation for environments running Node < 22
+// (Trigger.dev cloud currently runs Node 21 which lacks native WebSocket).
+export const supabaseClient = createClient(supabaseUrl, supabaseKey, {
+  realtime: { transport: ws as any },
+});
 
 export type UserSession = {
   telegram_chat_id: number;

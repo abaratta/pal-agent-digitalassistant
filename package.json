@@ -13,10 +13,12 @@
     "@supabase/supabase-js": "^2.49.0",
     "@trigger.dev/sdk": "^4.4.6",
     "dotenv": "^17.4.2",
-    "undici": "^7.28.0"
+    "undici": "^7.28.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/ws": "^8.18.1",
     "@vercel/node": "^5.8.17",
     "typescript": "^5.4.0"
   }
