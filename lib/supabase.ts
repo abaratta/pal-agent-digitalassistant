@@ -16,6 +16,9 @@ export type UserSession = {
   encrypted_anthropic_key: string | null;
   anthropic_agent_id: string | null;
   anthropic_environment_id: string | null;
+  anthropic_vault_id: string | null;
+  anthropic_file_ids: string[];
+  mcp_connectors: string[];
   created_at: string;
   updated_at: string;
 };

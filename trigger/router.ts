@@ -1,3 +1,8 @@
+import { config } from "dotenv";
+import path from "path";
+config({ path: path.resolve(__dirname, "../.env") }); // load .env for local dev worker
+import "../lib/netfix"; // force IPv4 outbound (broken IPv6 to Telegram on this network)
+
 import { task } from "@trigger.dev/sdk/v3";
 import { supabaseClient, type UserSession } from "../lib/supabase";
 import { handleOnboardingStep } from "./onboarding";
@@ -8,6 +13,7 @@ export type TelegramEventPayload = {
   text: string;
   document: { file_id: string; file_name: string; mime_type: string } | null;
   updateId: number;
+  callback: { id: string; data: string } | null;
 };
 
 export const routeTelegramEvent = task({
@@ -43,6 +49,11 @@ export const routeTelegramEvent = task({
     }
 
     if (!session) throw new Error(`Could not create session for chat ${payload.chatId}`);
+
+    // Normalize /start — treat it as an empty message to trigger the welcome prompt
+    if (payload.text.trim() === "/start") {
+      payload = { ...payload, text: "" };
+    }
 
     if (!session.onboarding_completed) {
       return await handleOnboardingStep(session as UserSession, payload);

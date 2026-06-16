@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npx trigger.dev@latest dev",
-    "deploy": "npx trigger.dev@latest deploy",
+    "dev": "npx trigger.dev@4.4.6 dev --skip-update-check",
+    "deploy": "npx trigger.dev@4.4.6 deploy --skip-update-check",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
+    "@anthropic-ai/sdk": "^0.104.2",
     "@supabase/supabase-js": "^2.49.0",
-    "@trigger.dev/sdk": "^3.0.0"
+    "@trigger.dev/sdk": "^4.4.6",
+    "dotenv": "^17.4.2",
+    "undici": "^7.28.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

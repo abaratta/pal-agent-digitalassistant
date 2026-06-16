@@ -5,4 +5,5 @@ export default defineConfig({
   runtime: "node",
   logLevel: "log",
   dirs: ["./trigger"],
+  maxDuration: 300, // 5 minutes — covers long agent streaming responses
 });

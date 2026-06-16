@@ -1,10 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { supabaseClient, type UserSession } from "../lib/supabase";
 import { sendMessage, editMessage, escapeMd } from "../lib/telegram";
 import { decryptApiKey } from "../lib/crypto";
+import { createSession, runPrompt } from "../lib/anthropic";
 import type { TelegramEventPayload } from "./router";
-
-const STREAM_THROTTLE_MS = 1200;
 
 export async function handleAgentProxyChat(
   session: UserSession,
@@ -24,27 +22,27 @@ export async function handleAgentProxyChat(
     return;
   }
 
+  if (!text.trim()) return;
+
+  const apiKey = await decryptApiKey(session.encrypted_anthropic_key!);
+
   // Resolve or create an active Anthropic session
-  let { data: activeConv } = await supabaseClient
+  const { data: activeConv } = await supabaseClient
     .from("agent_conversations")
     .select("anthropic_session_id")
     .eq("telegram_chat_id", chatId)
     .eq("is_active", true)
     .maybeSingle();
 
-  const apiKey = await decryptApiKey(session.encrypted_anthropic_key!);
-  const anthropic = new Anthropic({ apiKey });
-
-  let anthropicSessionId = activeConv?.anthropic_session_id;
+  let anthropicSessionId = activeConv?.anthropic_session_id as string | undefined;
 
   if (!anthropicSessionId) {
-    const newSession = await (anthropic.beta as any).agents.sessions.create({
-      agent_id: session.anthropic_agent_id,
-    }, {
-      headers: { "anthropic-beta": "managed-agents-2026-04-01" },
+    anthropicSessionId = await createSession(apiKey, {
+      agentId: session.anthropic_agent_id!,
+      environmentId: session.anthropic_environment_id!,
+      vaultId: session.anthropic_vault_id,
+      fileIds: session.anthropic_file_ids,
     });
-
-    anthropicSessionId = newSession.id;
 
     await supabaseClient.from("agent_conversations").insert({
       telegram_chat_id: chatId,
@@ -53,33 +51,12 @@ export async function handleAgentProxyChat(
     });
   }
 
-  // Send a placeholder bubble while streaming
-  let telegramMessageId = await sendMessage(chatId, escapeMd("⏳ Thinking…"));
-  let buffer = "";
-  let lastEditAt = 0;
+  // Placeholder bubble, updated live as the agent streams.
+  const messageId = await sendMessage(chatId, escapeMd("⏳ Thinking…"));
 
-  const stream = await (anthropic.beta as any).agents.sessions.messages.create(
-    session.anthropic_agent_id,
-    anthropicSessionId,
-    { role: "user", content: text, stream: true },
-    { headers: { "anthropic-beta": "managed-agents-2026-04-01" } }
-  );
+  const finalText = await runPrompt(apiKey, anthropicSessionId, text, async (full) => {
+    await editMessage(chatId, messageId, escapeMd(full));
+  });
 
-  for await (const chunk of stream) {
-    const delta = chunk?.delta?.text ?? "";
-    if (!delta) continue;
-
-    buffer += delta;
-
-    const now = Date.now();
-    if (now - lastEditAt >= STREAM_THROTTLE_MS) {
-      await editMessage(chatId, telegramMessageId, escapeMd(buffer));
-      lastEditAt = now;
-    }
-  }
-
-  // Final flush — ensure the complete response is shown
-  if (buffer) {
-    await editMessage(chatId, telegramMessageId, escapeMd(buffer));
-  }
+  await editMessage(chatId, messageId, escapeMd(finalText || "(no response)"));
 }
