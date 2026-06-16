@@ -191,6 +191,8 @@ async function handleConnectorCallback(
       await answerCallback(callback.id, `${CONNECTORS[key].label} added`);
     }
     await updateSession(chatId, { mcp_connectors: selected });
+    // Re-render the menu so the ✅ / ▫️ ticks reflect the new selection immediately.
+    await renderConnectorMenu(chatId, selected);
   } else {
     await answerCallback(callback.id);
   }

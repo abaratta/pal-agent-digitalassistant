@@ -8,10 +8,29 @@ export async function handleAgentProxyChat(
   session: UserSession,
   payload: TelegramEventPayload
 ): Promise<void> {
-  const { chatId, text } = payload;
+  const { chatId, text: rawText } = payload;
 
-  // Reset conversation thread
-  if (text.trim() === "/new_chat") {
+  const cmd = rawText.trim();
+
+  // /help — show available commands
+  if (cmd === "/help") {
+    await sendMessage(
+      chatId,
+      escapeMd(
+        "🤖 *Your Digital Personal Assistant*\n\n" +
+        "Available commands:\n" +
+        "/new\\_chat — Start a fresh conversation (clears context)\n" +
+        "/help — Show this message\n\n" +
+        "Tips:\n" +
+        "• Context resets when you use /new\\_chat — your long\\-term memories are always preserved across sessions\\.\n" +
+        "• Use /new\\_chat when the assistant seems to lose track of the current topic\\."
+      )
+    );
+    return;
+  }
+
+  // /new_chat — reset conversation thread
+  if (cmd === "/new_chat") {
     await supabaseClient
       .from("agent_conversations")
       .update({ is_active: false })
@@ -22,7 +41,13 @@ export async function handleAgentProxyChat(
     return;
   }
 
-  if (!text.trim()) return;
+  // Ignore unknown slash commands
+  if (cmd.startsWith("/")) {
+    await sendMessage(chatId, escapeMd("Unknown command. Send /help to see what's available."));
+    return;
+  }
+
+  if (!cmd) return;
 
   const apiKey = await decryptApiKey(session.encrypted_anthropic_key!);
 
@@ -55,7 +80,7 @@ export async function handleAgentProxyChat(
   // Placeholder bubble, updated live as the agent streams.
   const messageId = await sendMessage(chatId, escapeMd("⏳ Thinking…"));
 
-  const finalText = await runPrompt(apiKey, anthropicSessionId, text, async (full) => {
+  const finalText = await runPrompt(apiKey, anthropicSessionId, rawText, async (full) => {
     await editMessage(chatId, messageId, escapeMd(full));
   });
 
