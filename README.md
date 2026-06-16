@@ -54,11 +54,35 @@ Three Postgres tables (full DDL in [`supabase/migrations/`](supabase/migrations/
 - **`agent_conversations`** — mapping between Telegram chats and active Anthropic sessions (`is_active` flips on `/newchat`).
 - **`processed_updates`** — idempotency cache of Telegram `update_id`s (5-minute window).
 
-## Security
+## Privacy & Safety
 
-- **AES-GCM-256 at rest** — each user's API key is encrypted before storage ([`lib/crypto.ts`](lib/crypto.ts)) and decrypted only in volatile memory for outbound calls. Never logged or stored as plaintext. The bot never uses the operator's own key — only the per-user key the client pasted.
-- **Idempotency** — Telegram `update_id`s are cached so duplicate webhook retries are dropped.
-- **Strict boundaries** — the gateway never persists document content; Anthropic owns the data plane.
+### What we protect and how
+
+- **API keys encrypted at rest** — each user's Anthropic API key is encrypted with AES-GCM-256 ([`lib/crypto.ts`](lib/crypto.ts)) before it is written to the database. Decryption happens only in volatile memory, only at the moment an outbound API call is made. The key is never logged, never stored as plaintext, and never transmitted back to the user.
+
+- **Operator key never used** — the system does not hold or use an operator-level Anthropic key at runtime. Every API call is made with the individual user's own key. A breach of the system does not expose the operator's Anthropic account or billing.
+
+- **Fully isolated per-user resources** — each user gets their own dedicated Anthropic Agent, Environment, Vault, and Memory Store, provisioned under their own key. One user's agent, files, memories, and credentials are structurally separate from every other user's at the Anthropic infrastructure level.
+
+- **Webhook authentication** — Telegram webhooks are authenticated via a shared secret token ([`api/webhook.ts`](api/webhook.ts)). Any POST request that does not carry the correct `X-Telegram-Bot-Api-Secret-Token` header is rejected with 401. The handler **fails closed** — if the secret is not configured, it returns 500 rather than silently accepting unauthenticated requests.
+
+- **No cross-tenant data access** — every database read and write is scoped to the requesting user's `telegram_chat_id`. There is no query path that can return another user's data through normal operation.
+
+- **Idempotent message processing** — Telegram `update_id`s are recorded on first receipt. Duplicate webhook deliveries (Telegram retries on timeout) are detected and dropped before any processing occurs.
+
+- **Proxy-only architecture** — the gateway runs no local model inference, no document parsing, and no vector indexing. Uploaded knowledge files are streamed directly to Anthropic's Files API and never written to disk or stored in the application database. The content of user documents is never held by this system.
+
+- **No Telegram message log** — user messages are forwarded to Anthropic and discarded. The application database stores session identifiers and state, not message content or conversation history.
+
+- **Secrets never in source control** — `.env` is gitignored. All runtime secrets (`TELEGRAM_BOT_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`, `ENCRYPTION_KEY`, `TELEGRAM_WEBHOOK_SECRET`) are injected via environment variables at deploy time.
+
+### Known limitations and pending hardening
+
+- **API key entered via Telegram chat** — during onboarding, users currently paste their Anthropic key as a chat message, which passes through Telegram's servers. A Telegram Mini App flow that submits the key directly to the backend over HTTPS (bypassing Telegram entirely) is tracked in [PR #1](https://github.com/abaratta/pal-agent-digitalassistant/pull/1) and is the recommended path before any public launch.
+
+- **Single encryption key** — all users' API keys are encrypted with one `ENCRYPTION_KEY`. A simultaneous breach of both the database and that key would expose all stored keys at once. Per-user key derivation would reduce this blast radius.
+
+- **No Supabase Row Level Security** — database isolation relies entirely on application-level query scoping. RLS policies would provide an independent safety net against a future query that forgets to filter by `telegram_chat_id`.
 
 ## Getting started
 
