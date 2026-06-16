@@ -16,7 +16,7 @@ if (!TOKEN) {
 }
 
 const COMMANDS = [
-  { command: "new_chat", description: "Start a fresh conversation (clears context, keeps memories)" },
+  { command: "newchat", description: "Start a fresh conversation (clears context, keeps memories)" },
   { command: "help",     description: "Show available commands" },
 ];
 

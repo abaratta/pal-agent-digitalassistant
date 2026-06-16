@@ -19,18 +19,18 @@ export async function handleAgentProxyChat(
       escapeMd(
         "🤖 *Your Digital Personal Assistant*\n\n" +
         "Available commands:\n" +
-        "/new\\_chat — Start a fresh conversation (clears context)\n" +
+        "/newchat — Start a fresh conversation \\(clears context\\)\n" +
         "/help — Show this message\n\n" +
         "Tips:\n" +
-        "• Context resets when you use /new\\_chat — your long\\-term memories are always preserved across sessions\\.\n" +
-        "• Use /new\\_chat when the assistant seems to lose track of the current topic\\."
+        "• Context resets when you use /newchat — your long\\-term memories are always preserved across sessions\\.\n" +
+        "• Use /newchat when the assistant seems to lose track of the current topic\\."
       )
     );
     return;
   }
 
-  // /new_chat — reset conversation thread
-  if (cmd === "/new_chat") {
+  // /newchat — reset conversation thread
+  if (cmd === "/newchat") {
     await supabaseClient
       .from("agent_conversations")
       .update({ is_active: false })

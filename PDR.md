@@ -45,7 +45,7 @@ Created in `001_initial_schema.sql`, extended by `002` and `003`. Effective colu
 | `created_at`, `updated_at` | TIMESTAMPTZ | 001 | `updated_at` maintained by trigger. |
 
 ### 2.2 `agent_conversations` — Telegram thread ↔ Anthropic session map
-(`001`) `id`, `telegram_chat_id` (FK, cascade), `anthropic_session_id`, `is_active`, timestamps. `/new_chat` flips `is_active` to false so the next message creates a fresh session.
+(`001`) `id`, `telegram_chat_id` (FK, cascade), `anthropic_session_id`, `is_active`, timestamps. `/newchat` flips `is_active` to false so the next message creates a fresh session.
 
 ### 2.3 `processed_updates` — idempotency cache
 (`001`) `update_id` PK + `created_at`. Telegram retries are dropped if the `update_id` was already seen. Intended 5-minute purge via `pg_cron` (commented schedule in the migration).
@@ -122,7 +122,7 @@ OAuth for each connector is **manual**: the user finishes authorizing in the Ant
 
 ## 5. Phase 2 — Operational Proxy — [`trigger/agent.ts`](trigger/agent.ts)
 
-1. **`/new_chat`** → mark the active `agent_conversations` row inactive and confirm. Next message starts fresh.
+1. **`/newchat`** → mark the active `agent_conversations` row inactive and confirm. Next message starts fresh.
 2. Resolve the active Anthropic session for the chat; if none, **`createSession()`** ([`lib/anthropic.ts`](lib/anthropic.ts)) mounting: each knowledge file as a `file` resource, the memory store as a `read_write` `memory_store` resource, and the vault via `vault_ids`. Persist the new session in `agent_conversations`.
 3. Post a `⏳ Thinking…` placeholder, then **`runPrompt()`** streams the reply.
 
@@ -152,7 +152,7 @@ Uses the real Managed Agents sessions API (the v1 PDR's `agents.sessions.message
 - ✅ Full onboarding wizard: profile → key capture → real provisioning (agent/env/vault/memory) → file upload → MCP connector selection.
 - ✅ `setAgentConnectors` with optimistic-lock `version` handling.
 - ✅ Operational proxy: session create with file + memory + vault resources, throttled streaming back to Telegram.
-- ✅ AES-GCM-256 key encryption; MarkdownV2 escaping; `/new_chat` reset.
+- ✅ AES-GCM-256 key encryption; MarkdownV2 escaping; `/newchat` reset.
 - ✅ Webhook authentication via `TELEGRAM_WEBHOOK_SECRET` (fail-closed; see §6). Requires `setWebhook` to be re-registered with the matching `secret_token`.
 
 ### 7.2 Pending / TODO
@@ -193,7 +193,7 @@ General rule: **the code is the source of truth.** When you change behavior, upd
 4. Read/write it where needed.
 
 ### 8.4 Add a bot command (e.g. `/status`)
-Handle it early in `handleAgentProxyChat` ([`trigger/agent.ts`](trigger/agent.ts)) — mirror the existing `/new_chat` block (match on `text.trim()`, do the work, `return`). Onboarding-time commands go in `handleOnboardingStep` instead.
+Handle it early in `handleAgentProxyChat` ([`trigger/agent.ts`](trigger/agent.ts)) — mirror the existing `/newchat` block (match on `text.trim()`, do the work, `return`). Onboarding-time commands go in `handleOnboardingStep` instead.
 
 ### 8.5 Change the agent's model or system prompt
 Edit `MODEL` and `systemPromptFor()` in [`lib/anthropic.ts`](lib/anthropic.ts). Note: existing users already have provisioned agents — changes only affect **newly** provisioned ones unless you also push an `agents.update` (remember the optimistic-lock `version`).

@@ -36,7 +36,7 @@ The gateway is **proxy-only**: no tokenizers, chunking, vector indices, or model
 | [`api/webhook.ts`](api/webhook.ts) | Vercel handler. Parses Telegram update (message **or** `callback_query`), fires the `route-telegram-event` task, returns 200 instantly. |
 | [`trigger/router.ts`](trigger/router.ts) | Task entry point. Loads `.env`, forces IPv4, dedupes by `update_id`, loads/creates the user session, branches to onboarding vs. proxy. |
 | [`trigger/onboarding.ts`](trigger/onboarding.ts) | The onboarding state machine (one `case` per `current_step`) + the MCP connector inline-keyboard flow. |
-| [`trigger/agent.ts`](trigger/agent.ts) | Operational proxy: resolves/creates an Anthropic session, streams the reply, handles `/new_chat`. |
+| [`trigger/agent.ts`](trigger/agent.ts) | Operational proxy: resolves/creates an Anthropic session, streams the reply, handles `/newchat`. |
 | [`lib/anthropic.ts`](lib/anthropic.ts) | All Managed Agents SDK calls: `provisionAgent`, `setAgentConnectors`, `uploadKnowledgeFile`, `createSession`, `runPrompt`. The connector registry (`CONNECTORS`) lives here. |
 | [`lib/supabase.ts`](lib/supabase.ts) | Supabase client + `UserSession` / `AgentConversation` row types. |
 | [`lib/telegram.ts`](lib/telegram.ts) | Bot API helpers: `sendMessage`, `editMessage`, `getFileUrl`, `sendKeyboard`, `answerCallback`, `escapeMd` (MarkdownV2). |
@@ -51,7 +51,7 @@ The gateway is **proxy-only**: no tokenizers, chunking, vector indices, or model
 Three Postgres tables (full DDL in [`supabase/migrations/`](supabase/migrations/)):
 
 - **`user_sessions`** — per-user global state, onboarding step, profile metadata, encrypted Anthropic key, and the IDs of the provisioned Anthropic resources (agent, environment, vault, memory store, uploaded files, selected connectors).
-- **`agent_conversations`** — mapping between Telegram chats and active Anthropic sessions (`is_active` flips on `/new_chat`).
+- **`agent_conversations`** — mapping between Telegram chats and active Anthropic sessions (`is_active` flips on `/newchat`).
 - **`processed_updates`** — idempotency cache of Telegram `update_id`s (5-minute window).
 
 ## Security
